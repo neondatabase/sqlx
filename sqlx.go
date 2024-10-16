@@ -1046,8 +1046,8 @@ func fieldsByTraversal(octx *objectContext, v reflect.Value, traversals [][]int,
 	return nil
 }
 
-func missingFields(transversals [][]int) (field int, err error) {
-	for i, t := range transversals {
+func missingFields(traversals [][]int) (field int, err error) {
+	for i, t := range traversals {
 		if len(t) == 0 {
 			return i, errors.New("missing field")
 		}
