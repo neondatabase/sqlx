@@ -624,7 +624,7 @@ func (r *Rows) StructScan(dest interface{}) error {
 		r.started = true
 	}
 
-	octx := reflectx.NewObjectContext()
+	octx := newObjectContext()
 	err := fieldsByTraversal(octx, v, r.fields, r.values, true)
 	if err != nil {
 		return err
@@ -785,7 +785,7 @@ func (r *Row) scanAny(dest interface{}, structOnly bool) error {
 	}
 	values := make([]interface{}, len(columns))
 
-	octx := reflectx.NewObjectContext()
+	octx := newObjectContext()
 
 	err = fieldsByTraversal(octx, v, fields, values, true)
 	if err != nil {
@@ -954,7 +954,7 @@ func scanAll(rows rowsi, dest interface{}, structOnly bool) error {
 			return fmt.Errorf("missing destination name %s in %T", columns[f], dest)
 		}
 		values = make([]interface{}, len(columns))
-		octx := reflectx.NewObjectContext()
+		octx := newObjectContext()
 
 		for rows.Next() {
 			// create a new struct type (which returns PtrTo) and indirect it
@@ -1027,7 +1027,7 @@ func baseType(t reflect.Type, expected reflect.Kind) (reflect.Type, error) {
 // when iterating over many rows.  Empty traversals will get an interface pointer.
 // Because of the necessity of requesting ptrs or values, it's considered a bit too
 // specialized for inclusion in reflectx itself.
-func fieldsByTraversal(octx *reflectx.ObjectContext, v reflect.Value, traversals [][]int, values []interface{}, ptrs bool) error {
+func fieldsByTraversal(octx *objectContext, v reflect.Value, traversals [][]int, values []interface{}, ptrs bool) error {
 	v = reflect.Indirect(v)
 	if v.Kind() != reflect.Struct {
 		return errors.New("argument not a struct")
@@ -1057,4 +1057,51 @@ func missingFields(transversals [][]int) (field int, err error) {
 		}
 	}
 	return 0, nil
+}
+
+// objectContext provides a single layer to abstract away
+// nested struct scanning functionality
+type objectContext struct {
+	value reflect.Value
+}
+
+func newObjectContext() *objectContext {
+	return &objectContext{}
+}
+
+// NewRow updates the object reference.
+// This ensures all columns point to the same object
+func (o *objectContext) NewRow(value reflect.Value) {
+	o.value = value
+}
+
+// FieldForIndexes returns the value for address. If the address is a nested struct,
+// a nestedFieldScanner is returned instead of the standard value reference
+func (o *objectContext) FieldForIndexes(indexes []int) reflect.Value {
+	if len(indexes) == 1 {
+		return reflectx.FieldByIndexes(o.value, indexes)
+	}
+
+	obj := &nestedFieldScanner{
+		parent:  o,
+		indexes: indexes,
+	}
+
+	return reflect.ValueOf(obj).Elem()
+}
+
+// nestedFieldScanner will only forward the Scan to the nested value if
+// the database value is not nil.
+type nestedFieldScanner struct {
+	parent  *objectContext
+	indexes []int
+}
+
+// Scan implements sql.Scanner.
+func (o *nestedFieldScanner) Scan(src interface{}) error {
+	if src == nil {
+		return nil
+	}
+	dest := reflectx.FieldByIndexes(o.parent.value, o.indexes)
+	return convertAssign(dest.Addr().Interface(), src)
 }

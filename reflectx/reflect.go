@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	_ "unsafe"
 )
 
 // A FieldInfo is metadata for a struct field.
@@ -200,56 +199,6 @@ func (m *Mapper) TraversalsByNameFunc(t reflect.Type, names []string, fn func(in
 	}
 	return nil
 }
-
-// ObjectContext provides a single layer to abstract away
-// nested struct scanning functionality
-type ObjectContext struct {
-	value reflect.Value
-}
-
-func NewObjectContext() *ObjectContext {
-	return &ObjectContext{}
-}
-
-// NewRow updates the object reference.
-// This ensures all columns point to the same object
-func (o *ObjectContext) NewRow(value reflect.Value) {
-	o.value = value
-}
-
-// FieldForIndexes returns the value for address. If the address is a nested struct,
-// a nestedFieldScanner is returned instead of the standard value reference
-func (o *ObjectContext) FieldForIndexes(indexes []int) reflect.Value {
-	if len(indexes) == 1 {
-		return FieldByIndexes(o.value, indexes)
-	}
-
-	obj := &nestedFieldScanner{
-		parent:  o,
-		indexes: indexes,
-	}
-
-	return reflect.ValueOf(obj).Elem()
-}
-
-// nestedFieldScanner will only forward the Scan to the nested value if
-// the database value is not nil.
-type nestedFieldScanner struct {
-	parent  *ObjectContext
-	indexes []int
-}
-
-// Scan implements sql.Scanner.
-func (o *nestedFieldScanner) Scan(src interface{}) error {
-	if src == nil {
-		return nil
-	}
-	dest := FieldByIndexes(o.parent.value, o.indexes)
-	return convertAssign(dest.Addr().Interface(), src)
-}
-
-//go:linkname convertAssign database/sql.convertAssign
-func convertAssign(dest, src interface{}) error
 
 // FieldByIndexes returns a value for the field given by the struct traversal
 // for the given value.
