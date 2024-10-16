@@ -624,8 +624,7 @@ func (r *Rows) StructScan(dest interface{}) error {
 		r.started = true
 	}
 
-	octx := newObjectContext()
-	err := fieldsByTraversal(octx, v, r.fields, r.values)
+	err := fieldsByTraversal(v, r.fields, r.values)
 	if err != nil {
 		return err
 	}
@@ -785,9 +784,7 @@ func (r *Row) scanAny(dest interface{}, structOnly bool) error {
 	}
 	values := make([]interface{}, len(columns))
 
-	octx := newObjectContext()
-
-	err = fieldsByTraversal(octx, v, fields, values)
+	err = fieldsByTraversal(v, fields, values)
 	if err != nil {
 		return err
 	}
@@ -954,14 +951,13 @@ func scanAll(rows rowsi, dest interface{}, structOnly bool) error {
 			return fmt.Errorf("missing destination name %s in %T", columns[f], dest)
 		}
 		values = make([]interface{}, len(columns))
-		octx := newObjectContext()
 
 		for rows.Next() {
 			// create a new struct type (which returns PtrTo) and indirect it
 			vp = reflect.New(base)
 			v = reflect.Indirect(vp)
 
-			err = fieldsByTraversal(octx, v, fields, values)
+			err = fieldsByTraversal(v, fields, values)
 			if err != nil {
 				return err
 			}
@@ -1027,21 +1023,23 @@ func baseType(t reflect.Type, expected reflect.Kind) (reflect.Type, error) {
 // when iterating over many rows.  Empty traversals will get an interface pointer.
 // Because of the necessity of requesting ptrs or values, it's considered a bit too
 // specialized for inclusion in reflectx itself.
-func fieldsByTraversal(octx *objectContext, v reflect.Value, traversals [][]int, values []interface{}) error {
+func fieldsByTraversal(v reflect.Value, traversals [][]int, values []interface{}) error {
 	v = reflect.Indirect(v)
 	if v.Kind() != reflect.Struct {
 		return errors.New("argument not a struct")
 	}
 
-	octx.NewRow(v)
-
 	for i, traversal := range traversals {
 		if len(traversal) == 0 {
 			values[i] = new(interface{})
-			continue
+		} else if len(traversal) == 1 {
+			values[i] = reflectx.FieldByIndexes(v, traversal).Addr().Interface()
+		} else {
+			traversal := traversal
+			values[i] = optDest(func() interface{} {
+				return reflectx.FieldByIndexes(v, traversal).Addr().Interface()
+			})
 		}
-		f := octx.FieldForIndexes(traversal)
-		values[i] = f.Addr().Interface()
 	}
 	return nil
 }
@@ -1055,49 +1053,14 @@ func missingFields(traversals [][]int) (field int, err error) {
 	return 0, nil
 }
 
-// objectContext provides a single layer to abstract away
-// nested struct scanning functionality
-type objectContext struct {
-	value reflect.Value
-}
-
-func newObjectContext() *objectContext {
-	return &objectContext{}
-}
-
-// NewRow updates the object reference.
-// This ensures all columns point to the same object
-func (o *objectContext) NewRow(value reflect.Value) {
-	o.value = value
-}
-
-// FieldForIndexes returns the value for address. If the address is a nested struct,
-// a nestedFieldScanner is returned instead of the standard value reference
-func (o *objectContext) FieldForIndexes(indexes []int) reflect.Value {
-	if len(indexes) == 1 {
-		return reflectx.FieldByIndexes(o.value, indexes)
-	}
-
-	obj := &nestedFieldScanner{
-		parent:  o,
-		indexes: indexes,
-	}
-
-	return reflect.ValueOf(obj).Elem()
-}
-
-// nestedFieldScanner will only forward the Scan to the nested value if
+// optDest will only forward the Scan to the nested value if
 // the database value is not nil.
-type nestedFieldScanner struct {
-	parent  *objectContext
-	indexes []int
-}
+type optDest func() interface{}
 
 // Scan implements sql.Scanner.
-func (o *nestedFieldScanner) Scan(src interface{}) error {
+func (dest optDest) Scan(src interface{}) error {
 	if src == nil {
 		return nil
 	}
-	dest := reflectx.FieldByIndexes(o.parent.value, o.indexes)
-	return convertAssign(dest.Addr().Interface(), src)
+	return convertAssign(dest(), src)
 }
