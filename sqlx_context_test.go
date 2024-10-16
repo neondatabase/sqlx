@@ -437,12 +437,17 @@ func TestNamedQueryContext(t *testing.T) {
 				"FIRST" text NULL,
 				last_name text NULL,
 				"EMAIL" text NULL
+			);
+			CREATE TABLE persondetails (
+				email text NULL,
+				notes text NULL
 			);`,
 		drop: `
 			drop table person;
 			drop table jsperson;
 			drop table place;
 			drop table placeperson;
+			drop table persondetails;
 			`,
 	}
 
@@ -648,8 +653,8 @@ func TestNamedQueryContext(t *testing.T) {
 
 		type Owner struct {
 			Email     *string `db:"email"`
-			FirstName string `db:"first_name"`
-			LastName  string `db:"last_name"`
+			FirstName string  `db:"first_name"`
+			LastName  string  `db:"last_name"`
 		}
 
 		// Test optional nested structs with left join
@@ -680,11 +685,11 @@ func TestNamedQueryContext(t *testing.T) {
 		pp3 := &PlaceOwner{}
 		rows, err = db.NamedQueryContext(ctx, `
 			SELECT
+				place.id AS "place.id",
+				place.name AS "place.name",
 				placeperson.first_name "owner.first_name",
 				placeperson.last_name "owner.last_name",
-				placeperson.email "owner.email",
-				place.id AS "place.id",
-				place.name AS "place.name"
+				placeperson.email "owner.email"
 			FROM place
 			LEFT JOIN placeperson ON false -- null left join 
 			WHERE
@@ -698,7 +703,7 @@ func TestNamedQueryContext(t *testing.T) {
 				t.Error(err)
 			}
 			if pp3.Owner != nil {
-				t.Error("Expected `Owner`, to be nil")
+				t.Error("Expected `Owner` to be nil")
 			}
 			if pp3.Place.Name.String != "the-house" {
 				t.Error("Expected place name of `the-house`, got " + pp3.Place.Name.String)
@@ -710,41 +715,160 @@ func TestNamedQueryContext(t *testing.T) {
 
 		rows.Close()
 
-		pp3 = &PlaceOwner{}
+		pp4 := &PlaceOwner{}
 		rows, err = db.NamedQueryContext(ctx, `
 			SELECT
+				place.id AS "place.id",
+				place.name AS "place.name",
 				placeperson.first_name "owner.first_name",
 				placeperson.last_name "owner.last_name",
-				placeperson.email "owner.email",
-				place.id AS "place.id",
-				place.name AS "place.name"
+				placeperson.email "owner.email"
 			FROM place
-			left JOIN placeperson ON placeperson.place_id = place.id 
+			LEFT JOIN placeperson ON placeperson.place_id = place.id
 			WHERE
 				place.id=:place.id`, pp)
 		if err != nil {
 			log.Fatal(err)
 		}
 		for rows.Next() {
-			err = rows.StructScan(pp3)
+			err = rows.StructScan(pp4)
 			if err != nil {
 				t.Error(err)
 			}
-			if pp3.Owner == nil {
+			if pp4.Owner == nil {
+				t.Error("Expected `Owner` to not be nil")
+			}
+			if pp4.Owner.FirstName != "ben" {
+				t.Error("Expected first name of `ben`, got " + pp4.Owner.FirstName)
+			}
+			if pp4.Owner.LastName != "doe" {
+				t.Error("Expected first name of `doe`, got " + pp4.Owner.LastName)
+			}
+			if pp4.Place.Name.String != "the-house" {
+				t.Error("Expected place name of `the-house`, got " + pp4.Place.Name.String)
+			}
+			if pp4.Place.ID != pp.Place.ID {
+				t.Errorf("Expected place name of %v, got %v", pp.Place.ID, pp4.Place.ID)
+			}
+		}
+
+		type Details struct {
+			Email string `db:"email"`
+			Notes string `db:"notes"`
+		}
+
+		type OwnerDetails struct {
+			Email     *string  `db:"email"`
+			FirstName string   `db:"first_name"`
+			LastName  string   `db:"last_name"`
+			Details   *Details `db:"details"`
+		}
+
+		type PlaceOwnerDetails struct {
+			Place Place         `db:"place"`
+			Owner *OwnerDetails `db:"owner"`
+		}
+
+		pp5 := &PlaceOwnerDetails{}
+		rows, err = db.NamedQueryContext(ctx, `
+			SELECT
+				place.id AS "place.id",
+				place.name AS "place.name",
+				placeperson.first_name "owner.first_name",
+				placeperson.last_name "owner.last_name",
+				placeperson.email "owner.email",
+				persondetails.email "owner.details.email",
+				persondetails.notes "owner.details.notes"
+			FROM place
+			LEFT JOIN placeperson ON placeperson.place_id = place.id
+			LEFT JOIN persondetails ON false
+			WHERE
+				place.id=:place.id`, pp)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for rows.Next() {
+			err = rows.StructScan(pp5)
+			if err != nil {
+				t.Error(err)
+			}
+			if pp5.Owner == nil {
 				t.Error("Expected `Owner`, to not be nil")
 			}
+			if pp5.Owner.FirstName != "ben" {
+				t.Error("Expected first name of `ben`, got " + pp5.Owner.FirstName)
+			}
+			if pp5.Owner.LastName != "doe" {
+				t.Error("Expected first name of `doe`, got " + pp5.Owner.LastName)
+			}
+			if pp5.Place.Name.String != "the-house" {
+				t.Error("Expected place name of `the-house`, got " + pp5.Place.Name.String)
+			}
+			if pp5.Place.ID != pp.Place.ID {
+				t.Errorf("Expected place name of %v, got %v", pp.Place.ID, pp5.Place.ID)
+			}
+			if pp5.Owner.Details != nil {
+				t.Error("Expected `Details` to be nil")
+			}
+		}
 
-			if pp3.Owner.FirstName != "ben" {
-				t.Error("Expected first name of `ben`, got " + pp3.Owner.FirstName)
+		details := Details{
+			Email: pp.Email.String,
+			Notes: "this is a test person",
+		}
+
+		q6 := `INSERT INTO persondetails (email, notes) VALUES (:email, :notes)`
+		_, err = db.NamedExecContext(ctx, q6, details)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		pp6 := &PlaceOwnerDetails{}
+		rows, err = db.NamedQueryContext(ctx, `
+			SELECT
+				place.id AS "place.id",
+				place.name AS "place.name",
+				placeperson.first_name "owner.first_name",
+				placeperson.last_name "owner.last_name",
+				placeperson.email "owner.email",
+				persondetails.email "owner.details.email",
+				persondetails.notes "owner.details.notes"
+			FROM place
+			LEFT JOIN placeperson ON placeperson.place_id = place.id
+			LEFT JOIN persondetails ON persondetails.email = placeperson.email
+			WHERE
+				place.id=:place.id`, pp)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for rows.Next() {
+			err = rows.StructScan(pp6)
+			if err != nil {
+				t.Error(err)
 			}
-			if pp3.Owner.LastName != "doe" {
-				t.Error("Expected first name of `doe`, got " + pp3.Owner.LastName)
+			if pp6.Owner == nil {
+				t.Error("Expected `Owner` to not be nil")
 			}
-			if pp3.Place.Name.String != "the-house" {
-				t.Error("Expected place name of `the-house`, got " + pp3.Place.Name.String)
+			if pp6.Owner.FirstName != "ben" {
+				t.Error("Expected first name of `ben`, got " + pp6.Owner.FirstName)
 			}
-			if pp3.Place.ID != pp.Place.ID {
-				t.Errorf("Expected place name of %v, got %v", pp.Place.ID, pp3.Place.ID)
+			if pp6.Owner.LastName != "doe" {
+				t.Error("Expected first name of `doe`, got " + pp6.Owner.LastName)
+			}
+			if pp6.Place.Name.String != "the-house" {
+				t.Error("Expected place name of `the-house`, got " + pp6.Place.Name.String)
+			}
+			if pp6.Place.ID != pp.Place.ID {
+				t.Errorf("Expected place name of %v, got %v", pp.Place.ID, pp6.Place.ID)
+			}
+			if pp6.Owner.Details == nil {
+				t.Error("Expected `Details` to not be nil")
+			}
+			if pp6.Owner.Details.Email != details.Email {
+				t.Errorf("Expected details email of %v, got %v", details.Email, pp6.Owner.Details.Email)
+			}
+			if pp6.Owner.Details.Notes != details.Notes {
+				t.Errorf("Expected details notes of %v, got %v", details.Notes, pp6.Owner.Details.Notes)
 			}
 		}
 	})
