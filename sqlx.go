@@ -625,7 +625,7 @@ func (r *Rows) StructScan(dest interface{}) error {
 	}
 
 	octx := newObjectContext()
-	err := fieldsByTraversal(octx, v, r.fields, r.values, true)
+	err := fieldsByTraversal(octx, v, r.fields, r.values)
 	if err != nil {
 		return err
 	}
@@ -787,7 +787,7 @@ func (r *Row) scanAny(dest interface{}, structOnly bool) error {
 
 	octx := newObjectContext()
 
-	err = fieldsByTraversal(octx, v, fields, values, true)
+	err = fieldsByTraversal(octx, v, fields, values)
 	if err != nil {
 		return err
 	}
@@ -961,7 +961,7 @@ func scanAll(rows rowsi, dest interface{}, structOnly bool) error {
 			vp = reflect.New(base)
 			v = reflect.Indirect(vp)
 
-			err = fieldsByTraversal(octx, v, fields, values, true)
+			err = fieldsByTraversal(octx, v, fields, values)
 			if err != nil {
 				return err
 			}
@@ -1027,7 +1027,7 @@ func baseType(t reflect.Type, expected reflect.Kind) (reflect.Type, error) {
 // when iterating over many rows.  Empty traversals will get an interface pointer.
 // Because of the necessity of requesting ptrs or values, it's considered a bit too
 // specialized for inclusion in reflectx itself.
-func fieldsByTraversal(octx *objectContext, v reflect.Value, traversals [][]int, values []interface{}, ptrs bool) error {
+func fieldsByTraversal(octx *objectContext, v reflect.Value, traversals [][]int, values []interface{}) error {
 	v = reflect.Indirect(v)
 	if v.Kind() != reflect.Struct {
 		return errors.New("argument not a struct")
@@ -1041,11 +1041,7 @@ func fieldsByTraversal(octx *objectContext, v reflect.Value, traversals [][]int,
 			continue
 		}
 		f := octx.FieldForIndexes(traversal)
-		if ptrs {
-			values[i] = f.Addr().Interface()
-		} else {
-			values[i] = f.Interface()
-		}
+		values[i] = f.Addr().Interface()
 	}
 	return nil
 }
